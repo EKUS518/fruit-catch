@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>フルーツキャッチ</title>
+  <style>
+    body { margin:0; font-family:sans-serif; text-align:center; background:linear-gradient(180deg,#bfe9ff,#fffde7);}
+    h1{margin:8px;}
+    #hud{display:flex;justify-content:center;gap:12px;margin-bottom:8px;}
+    #score,#time,#title{background:rgba(255,255,255,0.7);padding:6px 10px;border-radius:8px;}
+    #gameArea{margin:auto;position:relative;width:400px;height:520px;border:3px solid #4b8bd4;border-radius:12px;overflow:hidden;background:linear-gradient(to top,#d9ffd9,#f7fff0);}
+    #basket{position:absolute;bottom:12px;left:calc(50% - 36px);font-size:48px;display:flex;align-items:center;justify-content:center;width:72px;height:72px;}
+    .item{position:absolute;top:-60px;font-size:40px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;pointer-events:none;}
+    .apple{text-shadow:0 2px rgba(200,0,0,0.2);}
+    .orange{text-shadow:0 2px rgba(255,140,0,0.2);}
+    .lemon{text-shadow:0 2px rgba(230,200,0,0.2);}
+    .bomb{filter:drop-shadow(0 3px 2px rgba(0,0,0,0.4));}
+    .star{text-shadow:0 3px 8px rgba(255,200,40,0.6);font-size:44px;}
+    #controls{margin-top:10px;display:flex;gap:10px;justify-content:center;}
+    .ctrl{width:110px;height:46px;background:#a4d3a2;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;user-select:none;}
+    #buttons{margin-top:12px;display:flex;gap:10px;justify-content:center;}
+    .btn{padding:8px 12px;border-radius:10px;background:#4b8bd4;color:white;font-weight:700;cursor:pointer;}
+    #ranking{margin-top:12px;background:rgba(255,255,255,0.8);border-radius:10px;padding:10px;max-width:300px;margin-left:auto;margin-right:auto;}
+    #rankList{list-style:none;padding:0;margin:0;}
+    #rankList li{margin:4px 0;}
+    #title{margin-top:6px;}
+  </style>
+</head>
+<body>
+  <h1>フルーツキャッチ</h1>
+  <div id="hud">
+    <div id="score">スコア: 0</div>
+    <div id="time">残り: 30s</div>
+  </div>
+  <div id="title">称号: なし</div>
+  <div id="gameArea">
+    <div id="basket">🧺</div>
+  </div>
+  <div id="controls">
+    <div class="ctrl" id="leftTouch">⬅️ 左</div>
+    <div class="ctrl" id="rightTouch">右 ➡️</div>
+  </div>
+  <div id="buttons">
+    <div class="btn" id="startBtn">スタート</div>
+    <div class="btn" id="restartBtn" style="background:#e05454">リスタート</div>
+  </div>
+  <div id="ranking">
+    <strong>ランキング（最高3回分）</strong>
+    <ul id="rankList"></ul>
+  </div>
+
+<script>
+const area = document.getElementById('gameArea');
+const basket = document.getElementById('basket');
+const scoreEl = document.getElementById('score');
+const timeEl = document.getElementById('time');
+const titleEl = document.getElementById('title');
+const leftTouch = document.getElementById('leftTouch');
+const rightTouch = document.getElementById('rightTouch');
+const startBtn = document.getElementById('startBtn');
+const restartBtn = document.getElementById('restartBtn');
+const rankListEl = document.getElementById('rankList');
+
+let basketX, basketW, areaW, areaH;
+let score=0,timeLeft=30,gameTimer=null,spawnTimer=null,items=[],running=false,mainLoopInterval=null;
+
+const types=[
+  {type:'apple',emoji:'🍎',score:1,speed:2.6},
+  {type:'orange',emoji:'🍊',score:1,speed:2.8},
+  {type:'lemon',emoji:'🍋',score:1,speed:3.0},
+  {type:'grape',emoji:'🍇',score:1,speed:3.0},
+  {type:'strawberry',emoji:'🍓',score:1,speed:3.0},
+  {type:'watermelon',emoji:'🍉',score:1,speed:3.0},
+  {type:'cherry',emoji:'🍒',score:1,speed:3.0},
+  {type:'star',emoji:'⭐',score:5,speed:5.0},
+  {type:'bomb',emoji:'💣',score:0,speed:3.6,bomb:true}
+];
+
+// ---------- サイズ更新 ----------
+function updateSizes(){
+  const areaRect = area.getBoundingClientRect();
+  areaW = Math.floor(areaRect.width);
+  areaH = Math.floor(areaRect.height);
+  basketW = basket.offsetWidth;
+  if(basketX===undefined) basketX=Math.floor((areaW-basketW)/2);
+  if(basketX<0)basketX=0;
+  if(basketX>areaW-basketW)basketX=areaW-basketW;
+  basket.style.left=basketX+'px';
+}
+window.addEventListener('resize',updateSizes);
+updateSizes();
+
+// ---------- 移動 ----------
+function moveBasketDir(dir){
+  const step = Math.max(12,Math.floor(areaW*0.06));
+  if(dir==='left') basketX-=step;
+  else basketX+=step;
+  if(basketX<0) basketX=0;
+  if(basketX>areaW-basketW) basketX=areaW-basketW;
+  basket.style.left=basketX+'px';
+}
+
+document.addEventListener('keydown',(e)=>{
+  if(!running) return;
+  if(e.key==='ArrowLeft'||e.key==='a') moveBasketDir('left');
+  if(e.key==='ArrowRight'||e.key==='d') moveBasketDir('right');
+});
+leftTouch.addEventListener('pointerdown',()=>moveBasketDir('left'));
+rightTouch.addEventListener('pointerdown',()=>moveBasketDir('right'));
+
+// ---------- アイテム生成 ----------
+function spawnItem(){
+  const el=document.createElement('div'); el.className='item';
+  const r=Math.random();
+  let info;
+  if(r<0.03) info=types.find(t=>t.type==='star');
+  else if(r<0.1) info=types.find(t=>t.type==='bomb');
+  else { const f=['apple','orange','lemon','grape','strawberry','watermelon','cherry']; info=types.find(t=>t.type===f[Math.floor(Math.random()*7)]);}
+  el.dataset.type=info.type;
+  el.dataset.speed=info.speed;
+  el.innerText=info.emoji;
+  const left=Math.floor(Math.random()*(areaW-48));
+  el.style.left=left+'px'; el.style.top='-64px'; area.appendChild(el);
+  items.push({el,type:info.type,speed:info.speed+Math.random()*0.7-0.2,x:left,y:-64,score:info.score||0,bomb:!!info.bomb});
+}
+
+// 衝突判定（当たり判定）
+function checkCollision(item){
+  let itemLeft = item.x,
+      itemTop  = item.y,
+      itemW    = item.el.offsetWidth,
+      itemH    = item.el.offsetHeight;
+
+  // 💣爆弾だけ判定を縮める
+  if(item.bomb){
+    const shrink = 40; // px単位で縮める量（調整できる）
+    itemLeft += shrink / 2;
+    itemTop  += shrink / 2;
+    itemW    -= shrink;
+    itemH    -= shrink;
+  }
+
+  const basketLeft = basketX,
+        basketTop  = areaH - basket.offsetHeight - 12,
+        basketH    = basket.offsetHeight,
+        basketW_   = basketW;
+
+  return !(itemLeft + itemW < basketLeft || 
+           itemLeft > basketLeft + basketW_ || 
+           itemTop + itemH < basketTop || 
+           itemTop > basketTop + basketH);
+}
+
+// ---------- ゲームループ ----------
+function gameLoop(){
+  for(let i=items.length-1;i>=0;i--){
+    const it=items[i];
+    it.y+=it.speed;
+    it.el.style.top=Math.round(it.y)+'px';
+    if(checkCollision(it)){
+      if(it.bomb){ endGame('bomb'); return; }
+      else { score+=it.score; scoreEl.innerText='スコア: '+score; updateTitle(score); it.el.remove(); items.splice(i,1); continue; }
+    }
+    if(it.y>areaH+80){ it.el.remove(); items.splice(i,1); }
+  }
+}
+
+// ---------- タイマー ----------
+function startTimers(){
+  gameTimer=setInterval(()=>{
+    timeLeft--; timeEl.innerText='残り: '+timeLeft+'s';
+    if(timeLeft<=0) endGame('timeup');
+  },1000);
+  spawnTimer=setInterval(spawnItem,500);
+  mainLoopInterval=setInterval(gameLoop,16);
+}
+function stopTimers(){
+  clearInterval(gameTimer); clearInterval(spawnTimer); clearInterval(mainLoopInterval);
+  gameTimer=spawnTimer=mainLoopInterval=null;
+}
+
+// ---------- 称号 ----------
+function updateTitle(score){
+  let title='';
+  if(score>=55) title='あなたはチーター'
+  else if(score>=41) title='フルーツを極めた者';
+  else if(score>=36) title='フルーツキング'
+  else if(score>=31) title='スーパーフルーツマスター';
+  else if(score>=26) title='フルーツマスター';
+  else if(score>=21) title='フルーツ博士！';
+  else if(score>=11) title='フルーツ好き';
+  else if(score>=1) title='初心者';
+  else title='なし';
+  titleEl.innerText='称号: '+title;
+}
+
+// ---------- localStorageランキング ----------
+function saveScore(score){ 
+  const scores=JSON.parse(localStorage.getItem('fcScores')||'[]');
+  scores.push(score); scores.sort((a,b)=>b-a); scores.splice(3); // 上位3
+  localStorage.setItem('fcScores',JSON.stringify(scores));
+  displayRanking();
+}
+function displayRanking(){
+  const scores=JSON.parse(localStorage.getItem('fcScores')||'[]');
+  rankListEl.innerHTML='';
+  scores.forEach((s,i)=>{ const li=document.createElement('li'); li.innerText=`${i+1}位: ${s}`; rankListEl.appendChild(li); });
+}
+
+// ---------- 開始・終了 ----------
+function startGame(){
+  if(running) return;
+  running=true; score=0; timeLeft=30; scoreEl.innerText='スコア: '+score; timeEl.innerText='残り: '+timeLeft+'s';
+  updateTitle(score);
+  items.forEach(it=>it.el.remove()); items=[];
+  updateSizes(); basketX=Math.floor((areaW-basketW)/2); basket.style.left=basketX+'px';
+  startTimers();
+}
+function endGame(reason){
+  if(!running) return;
+  running=false; stopTimers();
+  items.forEach(it=>it.el.remove()); items=[];
+  saveScore(score);
+  if(reason==='bomb') alert('💥爆弾に当たった！ゲームオーバー\n最終スコア: '+score);
+  else alert('時間切れ！最終スコア: '+score);
+}
+
+startBtn.addEventListener('click',()=>startGame());
+restartBtn.addEventListener('click',()=>startGame());
+displayRanking();
+</script>
+</body>
+</html>
